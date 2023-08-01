@@ -27,7 +27,7 @@ async fn backup_restore() {
     const PORT: u16 = 15001;
     const OPS: usize = 100;
 
-    let _ = S3BucketCleaner::new(BUCKET).await;
+    let _bucket_cleaner = S3BucketCleaner::new(BUCKET).await;
     assert_bucket_occupancy(BUCKET, true).await;
 
     let listener_addr = format!("0.0.0.0:{}", PORT)
@@ -214,7 +214,7 @@ async fn rollback_restore() {
         Ok(rows)
     }
 
-    let _ = S3BucketCleaner::new(BUCKET).await;
+    let _bucket_cleaner = S3BucketCleaner::new(BUCKET).await;
     assert_bucket_occupancy(BUCKET, true).await;
 
     let listener_addr = format!("0.0.0.0:{}", PORT)
@@ -417,8 +417,57 @@ impl S3BucketCleaner {
 }
 
 impl Drop for S3BucketCleaner {
+    // This works but requires a new runtime.
     fn drop(&mut self) {
-        //FIXME: running line below on tokio::test runtime will hang.
-        //let _ = block_on(Self::cleanup(self.0));
+        std::thread::spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            let _ = rt.block_on(Self::cleanup(self.0));
+        })
+        .join()
+        .unwrap();
     }
+
+    // Hangs forever
+    // fn drop(&mut self) {
+    //     let handle = tokio::runtime::Handle::current();
+    //     std::thread::scope(|s| {
+    //         s.spawn(move || {
+    //             let _ = handle.block_on(Self::cleanup(self.0));
+    //         });
+    //     });
+    //     std::thread::scope(|s| {
+    //         s.spawn(move || {
+    //             let _ = handle.block_on(Self::cleanup(self.0));
+    //         });
+    //     });
+    // }
+
+    // Hangs forever and also requires multi-thread tokio runtime
+    // fn drop(&mut self) {
+    //     let _ = tokio::task::block_in_place(|| {
+    //         tokio::runtime::Handle::current().block_on(Self::cleanup(self.0))
+    //     });
+    // }
+
+    // Also hangs forever
+    // fn drop(&mut self) {
+    //     let task = tokio::spawn(Self::cleanup(self.0));
+    //     let _ = futures::executor::block_on(task).unwrap();
+    // }
+
+    // Hangs too
+    // fn drop(&mut self) {
+    //     let task = tokio::spawn(Self::cleanup(self.0));
+    //     let _ = tokio::runtime::Handle::current().block_on(task).unwrap();
+    // }
+
+    // Hangs
+    // fn drop(&mut self) {
+    //     tokio::task::block
+    //     let _ = tokio::runtime::Handle::current().block_on(Self::cleanup(self.0));
+    // }
 }
